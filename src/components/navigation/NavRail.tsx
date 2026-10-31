@@ -84,7 +84,7 @@ export default function NavRail({ activeView, tourSelected, onNavigate, onOpenSe
                     aria-current={activeView === item.id ? 'page' : undefined}
                     onClick={() => onNavigate(item.id)}
                   >
-                    <Icon size={16} strokeWidth={1.8} />
+                    <Icon size={18} strokeWidth={1.8} />
                     <Text component="span" className="app-nav-item-label">{t(item.label)}</Text>
                   </UnstyledButton>
                 </Tooltip>
@@ -95,17 +95,17 @@ export default function NavRail({ activeView, tourSelected, onNavigate, onOpenSe
       </Stack>
 
       <Stack className="app-nav-rail-bottom" gap={4} align="center">
-        {onOpenFile && <Menu position="right-end"><Menu.Target><UnstyledButton className="app-nav-item" aria-label={t('打开文件')}><FolderOpen size={16} strokeWidth={1.8} /><Text component="span" className="app-nav-item-label">{t('打开')}{pendingFileCount > 0 ? ` ${pendingFileCount}` : ''}</Text></UnstyledButton></Menu.Target><Menu.Dropdown><Menu.Item onClick={onOpenFile}>{t('打开文件')} (Ctrl+O)</Menu.Item><Menu.Item onClick={onRecentFiles}>{t("最近文件")}</Menu.Item><Menu.Item onClick={onRecoverFiles}>{t('恢复独立文件草稿')}</Menu.Item><Menu.Item onClick={onPendingFiles}>{t('待打开文件')} ({pendingFileCount})</Menu.Item></Menu.Dropdown></Menu>}
+        {onOpenFile && <Menu position="right-end"><Menu.Target><UnstyledButton className="app-nav-item" aria-label={t('打开文件')}><FolderOpen size={18} strokeWidth={1.8} /><Text component="span" className="app-nav-item-label">{t('打开')}{pendingFileCount > 0 ? ` ${pendingFileCount}` : ''}</Text></UnstyledButton></Menu.Target><Menu.Dropdown><Menu.Item onClick={onOpenFile}>{t('打开文件')} (Ctrl+O)</Menu.Item><Menu.Item onClick={onRecentFiles}>{t("最近文件")}</Menu.Item><Menu.Item onClick={onRecoverFiles}>{t('恢复独立文件草稿')}</Menu.Item><Menu.Item onClick={onPendingFiles}>{t('待打开文件')} ({pendingFileCount})</Menu.Item></Menu.Dropdown></Menu>}
         <Tooltip label={t("管理全部笔记库")} position="right" withArrow>
           <UnstyledButton data-onboarding-anchor="menu-libraries" data-tour-selected={tourSelected === 'libraries' || undefined} className={`app-nav-item ${activeView === 'libraries' ? 'active' : ''}`} aria-label={t("笔记库管理")} aria-current={activeView === 'libraries' ? 'page' : undefined} onClick={() => onNavigate('libraries')}>
-            <Library size={16} strokeWidth={1.8} />
+            <Library size={18} strokeWidth={1.8} />
             <Text component="span" className="app-nav-item-label">{t("笔记库")}</Text>
           </UnstyledButton>
         </Tooltip>
         <div className="app-nav-divider" />
         <Tooltip label={t("设置")} position="right" withArrow>
           <UnstyledButton data-onboarding-anchor="menu-settings" data-tour-selected={tourSelected === 'settings' || undefined} className={`app-nav-item ${activeView === 'settings' ? 'active' : ''}`} aria-label={t("设置")} aria-current={activeView === 'settings' ? 'page' : undefined} onClick={onOpenSettings}>
-            <Settings size={16} strokeWidth={1.8} />
+            <Settings size={18} strokeWidth={1.8} />
             <Text component="span" className="app-nav-item-label">{t("设置")}</Text>
           </UnstyledButton>
         </Tooltip>

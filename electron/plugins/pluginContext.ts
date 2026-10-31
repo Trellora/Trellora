@@ -22,6 +22,7 @@ export interface ContributionSink {
   parsingRoutes: Map<string, { pluginId: string; route: string; handler: (input: PluginParseInput) => Promise<PluginParseOutput> }>;
   aiProviders: Map<string, { pluginId: string; api: string; endpoint: string; generate: (input: PluginAiGenerationInput) => Promise<PluginAiGenerationOutput> }>;
   uiCommands: Map<string, { pluginId: string; title: string; panel?: string; execute: (args: PluginUiCommandArgs) => void | Promise<void> }>;
+  viewHandlers: Map<string, { pluginId: string; viewId: string; invoke: (request: { method: string; params?: unknown }) => unknown | Promise<unknown> }>;
 }
 
 export interface PluginContextOptions {
@@ -35,6 +36,13 @@ export interface PluginContextOptions {
   subscribe: (event: string, listener: (payload: unknown) => void) => () => void;
   /** 日程扩展点的宿主实现（未接入时为 undefined，调用即抛可操作错误）。 */
   schedule?: PluginScheduleApi;
+  /** V1.2 配置正式化（契约 §4.8）：manifest settings 默认值 + 用户覆盖的合并值。 */
+  configValues?: Record<string, unknown>;
+  secretStore?: {
+    get: (pluginId: string, key: string) => Promise<string>;
+    set: (pluginId: string, key: string, value: string) => Promise<void>;
+    delete: (pluginId: string, key: string) => Promise<void>;
+  };
 }
 
 /**
@@ -70,11 +78,20 @@ export function buildPluginContext(options: PluginContextOptions): PluginContext
     manifest: options.manifest as PluginContext['manifest'],
     storageDir: options.storageDir,
     log,
-    config: {
-      get: <T = unknown>(_key: string, fallback?: T) => fallback as T,
-      has: () => false,
-      keys: () => [],
-    },
+    config: (() => {
+      // V1.2 配置正式化（契约 §4.8）：读 manifest settings 声明键的合并值
+      // （用户覆盖 → manifest default），未声明键永远回退 fallback。
+      const values = options.configValues ?? {};
+      const manifestSettings = ((options.manifest ?? {}) as { settings?: Record<string, unknown> }).settings ?? {};
+      return {
+        get: <T = unknown>(key: string, fallback?: T): T => {
+          if (!(key in manifestSettings)) return fallback as T;
+          return (key in values ? values[key] : fallback) as T;
+        },
+        has: (key: string) => key in manifestSettings,
+        keys: () => Object.keys(manifestSettings),
+      };
+    })(),
     events,
     pipeline: {
       registerParsingRoute: (contribution) => {
@@ -112,6 +129,34 @@ export function buildPluginContext(options: PluginContextOptions): PluginContext
         guard('ui:command');
         if (sink.uiCommands.has(contribution.id)) throw new Error(`UI 命令 ${contribution.id} 已被占用。`);
         sink.uiCommands.set(contribution.id, { pluginId, title: contribution.title, panel: contribution.panel, execute: contribution.execute });
+      },
+      registerViewHandler: (contribution) => {
+        guard('ui:view');
+        const declared = (options.manifest as PluginContext['manifest']).contributes?.views?.some((view) => view.id === contribution.viewId);
+        if (!declared) throw new Error(`插件页面 ${contribution.viewId} 未在 manifest contributes.views 中声明。`);
+        const key = `${pluginId}:${contribution.viewId}`;
+        if (sink.viewHandlers.has(key)) throw new Error(`UI 页面处理器 ${key} 已被占用。`);
+        sink.viewHandlers.set(key, { pluginId, viewId: contribution.viewId, invoke: contribution.invoke });
+      },
+    },
+    secrets: {
+      get: async (key) => {
+        guard('system:file');
+        assertSecretKey(key);
+        if (!options.secretStore) throw new Error('宿主未提供安全密钥存储。');
+        return options.secretStore.get(pluginId, key);
+      },
+      set: async (key, value) => {
+        guard('system:file');
+        assertSecretKey(key);
+        if (typeof value !== 'string') throw new Error('密钥内容必须是字符串。');
+        if (!options.secretStore) throw new Error('宿主未提供安全密钥存储。');
+        await options.secretStore.set(pluginId, key, value);
+      },
+      delete: async (key) => {
+        guard('system:file');
+        assertSecretKey(key);
+        await options.secretStore?.delete(pluginId, key);
       },
     },
     data: {
@@ -183,6 +228,10 @@ const PLUGIN_NETWORK_TIMEOUT_MS = 10_000;
  * result stays inside it, blocking ../ traversal and absolute paths.
  * 解析插件存储根下的相对路径并断言结果留在其内，阻止 ../ 越界与绝对路径。
  */
+function assertSecretKey(key: string): void {
+  if (typeof key !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/u.test(key)) throw new Error('密钥名称须为 1-128 位字母、数字、点、下划线或连字符。');
+}
+
 function safePluginPath(storageDir: string, relativePath: string): string {
   if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath)) {
     throw new Error('插件文件路径必须是非空相对路径。');

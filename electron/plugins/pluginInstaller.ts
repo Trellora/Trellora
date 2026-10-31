@@ -14,27 +14,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createWriteStream } from 'node:fs';
-import { pipeline } from 'node:stream/promises';
 import zlib from 'node:zlib';
-import { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
+import { downloadToFile } from './pluginDownload.ts';
 import { parsePluginManifest } from './pluginManifest.ts';
 import type { PluginManifest } from './pluginTypes.ts';
 
 export interface InstallResult {
   manifest: PluginManifest;
   pluginDir: string;
-}
-
-/** Downloads a URL to a file (https only; SSRF guard applied). */
-async function downloadToFile(url: string, destination: string): Promise<void> {
-  const parsed = new URL(url);
-  if (parsed.protocol !== 'https:') throw new Error('插件下载仅支持 https。');
-  if (parsed.username || parsed.password) throw new Error('下载 URL 不能包含账号信息。');
-  const response = await fetch(parsed.href, { signal: AbortSignal.timeout(60_000) });
-  if (!response.ok || !response.body) throw new Error(`下载失败（HTTP ${response.status}）。`);
-  await pipeline(Readable.fromWeb(response.body as never), createWriteStream(destination));
 }
 
 // ── Minimal zip reader (central directory + local file headers) ──────────────
@@ -115,7 +103,14 @@ function inflateRawSync(data: Buffer): Buffer {
 export async function installPluginFromZip(zipPath: string, pluginsDir: string): Promise<InstallResult> {
   const staging = fs.mkdtempSync(path.join(path.dirname(pluginsDir), '.plugin-staging-'));
   try {
-    const entries = readZipEntries(zipPath);
+    let entries: ZipEntry[];
+    try {
+      entries = readZipEntries(zipPath);
+    } catch (error) {
+      // Corrupted download or a non-zip payload must be blamed on the package,
+      // not on the plugin itself / 损坏的下载或非 zip 载荷应归因于插件包本身。
+      throw new Error(`插件包无法读取（不是有效的 ZIP 文件）：${(error as Error).message}`);
+    }
     // The zip root may be a folder or the plugin.json may be at the top level.
     // zip 根可能是文件夹，或 plugin.json 直接在顶层。
     const manifestEntry = entries.find((e) => e.name === 'plugin.json' || e.name.endsWith('/plugin.json'));

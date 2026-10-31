@@ -7,12 +7,13 @@ import type { ModelConfigurationChange, ModelProviderCatalogDraft } from '../../
 import { ModelConfigurationSaveCancelled } from './useModelConfigurationSave.tsx';
 import WorkspaceBackupSettings from './WorkspaceBackupSettings.tsx';
 import WorkspaceRestoreSettings from './WorkspaceRestoreSettings.tsx';
+import PluginViewFrame from '../plugins/PluginViewFrame.tsx';
 import { ModelHealthPanel, ZombieCleanupBar } from './ModelHealthPanel.tsx';
 import './WorkspaceSettings.css';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Alert, Accordion, Badge, Box, Button, Checkbox, Code, Divider, Group, Menu, Modal, NumberInput, Pagination, Paper, PasswordInput, ScrollArea, Select, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, ThemeIcon, Transition, UnstyledButton } from '@mantine/core';
-import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, Cloud, Database, ExternalLink, FileText, Filter, FolderOpen, Github, Globe, Info, Keyboard, KeyRound, Monitor, Moon, Plus, RefreshCw, Rows3, Rows4, ScanText, Settings2, ShieldCheck, Sparkles, Sun, Trash2, UserRound } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, Cloud, Database, ExternalLink, FileText, Filter, FolderOpen, Github, Globe, Info, Keyboard, KeyRound, Monitor, Moon, Plus, Puzzle, RefreshCw, Rows3, Rows4, ScanText, Settings2, ShieldCheck, Sparkles, Sun, Trash2, UserRound } from 'lucide-react';
 import type { AiExtensionsSettings, AiGenerationApi, AiModelProfile, AiModelSettings, AiModelSettingsInput, AiProviderConfig, AiProviderStatus, AiRemoteProviderId, AiSkillGenerationStyle, AiSkillImportKind, AiSkillsOverview, AppDiagnostics, AppPreferences, ModelHub, ModelSlotId, ParsingConfig, RemoteProviderModelsResult, SelectionExpansionSettings, WebSearchConfig, WebSearchConfigView, WebSearchProviderId, WebSearchProviderRequirement } from '../../electron';
 import type { ResolvedTheme } from '../../utils/ui/theme.ts';
 import { selectEmbeddingModelNames } from '../../utils/knowledge/embeddingModelOptions.ts';
@@ -28,7 +29,9 @@ import LightColorSchemePicker from './LightColorSchemePicker.tsx';
 import EditorPreferencesSettings from './EditorPreferencesSettings.tsx';
 import { showConfirm } from '../../utils/ui/feedback.ts';
 
-export type SettingsSection = 'general' | 'library' | 'editor' | 'shortcuts' | 'user-information' | 'parsing' | 'web-search' | 'ai-writing' | 'model' | 'skills' | 'about';
+type CoreSettingsSection = 'general' | 'library' | 'editor' | 'shortcuts' | 'user-information' | 'parsing' | 'web-search' | 'ai-writing' | 'model' | 'skills' | 'about';
+export type SettingsSection = CoreSettingsSection | `plugin:${string}`;
+type PluginView = { pluginId: string; id: string; title: string; entry: string; section: SettingsSection };
 type ModelSettingsTab = 'profiles' | 'config' | 'add';
 
 /** Compared only in renderer memory; keys never enter guide state or logs. */
@@ -86,7 +89,7 @@ interface SettingsPanelProps {
   onSaveModelConfiguration: (change: ModelConfigurationChange) => Promise<ModelHub>;
 }
 
-const sections: Array<{ id: SettingsSection; label: string; group: string; icon: typeof Settings2 }> = [
+const sections: Array<{ id: CoreSettingsSection; label: string; group: string; icon: typeof Settings2 }> = [
   { id: 'general', label: '通用', group: '工作区配置', icon: Settings2 },
   { id: 'library', label: '工作区与备份', group: '工作区配置', icon: Database },
   { id: 'editor', label: '编辑器', group: '工作区配置', icon: FileText },
@@ -142,6 +145,13 @@ export default function SettingsPanel({
 }: SettingsPanelProps) {
   useI18n();
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [pluginViews, setPluginViews] = useState<PluginView[]>([]);
+  const [pluginViewRevision, setPluginViewRevision] = useState(0);
+  const visibleSections = useMemo(() => [
+    ...sections.slice(0, -1),
+    ...pluginViews.map((view) => ({ id: view.section, label: view.title, group: '插件', icon: Puzzle })),
+    sections[sections.length - 1],
+  ], [pluginViews]);
   const [draftPreferences, setDraftPreferences] = useState(preferences);
   const [draftAi, setDraftAi] = useState(aiConfig);
   const [draftModelSettings, setDraftModelSettings] = useState<AiModelSettings>(aiModelSettings);
@@ -240,6 +250,40 @@ export default function SettingsPanel({
       window.electronAPI.getAiSkillsOverview().then(setSkillsOverview).catch(() => undefined),
     ]);
   }, [aiConfig, aiExtensionsSettings, aiModelSettings, guidedModel, initialSection, modelHub, preferences]);
+
+  // 宿主只挂载已启用插件声明的通用页面，不包含任何插件专属组件。
+  useEffect(() => {
+    let alive = true;
+    const refreshPluginViews = async () => {
+      try {
+        const plugins = await window.electronAPI.plugin.list();
+        if (!alive) return;
+        const views: PluginView[] = plugins.filter((plugin) => plugin.state === 'active').flatMap((plugin) =>
+          (plugin.manifest.contributes?.views ?? []).filter((view) => view.location === 'settings').map((view) => ({
+            pluginId: plugin.manifest.id,
+            id: view.id,
+            title: view.title,
+            entry: view.entry,
+            section: `plugin:${plugin.manifest.id}:${view.id}`,
+          })),
+        );
+        setPluginViews(views);
+        setPluginViewRevision((revision) => revision + 1);
+      } catch {
+        if (alive) setPluginViews([]);
+      }
+    };
+    void refreshPluginViews();
+    window.addEventListener('trellora:plugins-changed', refreshPluginViews);
+    return () => {
+      alive = false;
+      window.removeEventListener('trellora:plugins-changed', refreshPluginViews);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (section.startsWith('plugin:') && !pluginViews.some((view) => view.section === section)) setSection('about');
+  }, [pluginViews, section]);
 
   // 页面缓存后仍需响应来自其它入口（例如资料页“配置模型”）的目标分区。
   useEffect(() => {
@@ -987,9 +1031,9 @@ export default function SettingsPanel({
         setError(null);
       }} orientation="vertical" variant="default" keepMounted={false} className="settings-mantine-tabs">
         <Tabs.List className="settings-mantine-tabs-list" aria-label={t("设置分组")}>
-          {sections.map((item, index) => {
+          {visibleSections.map((item, index) => {
             const Icon = item.icon;
-            const previous = sections[index - 1];
+            const previous = visibleSections[index - 1];
             return <Fragment key={item.id}>
               {(!previous || previous.group !== item.group) ? <Text className="settings-mantine-nav-label" size="xs" fw={700}>{t(item.group)}</Text> : null}
               <Tabs.Tab className="settings-mantine-tab" value={item.id} leftSection={<Icon size={16} strokeWidth={1.8} />}>{t(item.label)}</Tabs.Tab>
@@ -1409,6 +1453,20 @@ export default function SettingsPanel({
                 <UserInformationSettings setFeedback={setFeedback} setError={setError} reviewRequest={memoryReviewRequest} />
               </SettingsSection>
             </Tabs.Panel>
+
+            {pluginViews.map((view) => (
+              <Tabs.Panel value={view.section} key={view.section}>
+                <SettingsSection group={t("插件")} title={view.title}>
+                  <PluginViewFrame
+                    key={`${view.section}:${pluginViewRevision}`}
+                    pluginId={view.pluginId}
+                    viewId={view.id}
+                    entry={view.entry}
+                    title={view.title}
+                  />
+                </SettingsSection>
+              </Tabs.Panel>
+            ))}
 
             <Tabs.Panel value="about">
               <SettingsSection group={t("系统")} title={t("关于与诊断")}>

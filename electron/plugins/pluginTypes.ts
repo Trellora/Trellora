@@ -22,6 +22,7 @@ export type PluginPermission =
   | 'pipeline:parse'
   | 'ai:provider'
   | 'ui:command'
+  | 'ui:view'
   | 'data:source'
   | 'schedule:write'
   | 'system:file'
@@ -35,10 +36,18 @@ export type PluginActivationEvent =
   | 'onUiCommand'
   | '*';
 
+export interface PluginViewContribution {
+  id: string;
+  title: string;
+  location: 'settings';
+  entry: string;
+}
+
 export interface PluginContributions {
   parsingRoutes?: Array<{ extension: string; route: string }>;
   aiProviders?: Array<{ id: string; api: string }>;
   uiCommands?: Array<{ id: string; title: string; panel?: 'sidebar' | 'command-palette' | 'toolbar' }>;
+  views?: PluginViewContribution[];
 }
 
 export interface PluginManifest {
@@ -52,7 +61,18 @@ export interface PluginManifest {
   engine: PluginEngineRange;
   permissions: PluginPermission[];
   activation: PluginActivationEvent[];
+  /** V1.2 配置正式化（契约 §4.8）：manifest settings schema（键 → 类型/默认值）。 */
+  settings?: Record<string, PluginSettingSpec>;
   contributes?: PluginContributions;
+}
+
+/** manifest settings 单键声明（契约 §4.8）。 */
+export interface PluginSettingSpec {
+  type: 'string' | 'number' | 'boolean' | 'string[]';
+  default: string | number | boolean | string[];
+  title?: string;
+  min?: number;
+  max?: number;
 }
 
 // ── Loaded plugin state ──────────────────────────────────────────────────────
@@ -152,6 +172,15 @@ export interface PluginContext {
       panel?: 'sidebar' | 'command-palette' | 'toolbar'; icon?: string;
       execute: (args: PluginUiCommandArgs) => void | Promise<void>;
     }): void;
+    registerViewHandler(contribution: {
+      viewId: string;
+      invoke: (request: { method: string; params?: unknown }) => unknown | Promise<unknown>;
+    }): void;
+  };
+  secrets: {
+    get(key: string): Promise<string>;
+    set(key: string, value: string): Promise<void>;
+    delete(key: string): Promise<void>;
   };
   data: {
     registerDataSource(contribution: {
@@ -203,6 +232,7 @@ export const L1_PERMISSIONS: ReadonlySet<PluginPermission> = new Set([
   'pipeline:parse',
   'ai:provider',
   'ui:command',
+  'ui:view',
   'data:source',
   'schedule:write',
 ]);

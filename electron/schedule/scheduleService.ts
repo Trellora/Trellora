@@ -409,8 +409,7 @@ export class ScheduleService {
   }
 
   /**
-   * 分类只在缺失时按默认色新建（契约 §5.1：首次同步 upsert 分类「群务台」#0F766E）；
-   * 已存在的用户分类颜色绝不覆盖。
+   * 分类只在缺失时按默认色新建；已存在的用户分类颜色绝不覆盖。
    */
   private ensureExternalCategory(name: string): void {
     const result = this.database.prepare(`

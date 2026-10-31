@@ -26,6 +26,17 @@ export interface PluginHostOptions {
   onRequestL2Authorization?: (manifest: { id: string; name: string; version: string }, permissions: string[]) => Promise<boolean>;
   /** 日程扩展点宿主实现（ScheduleService 适配器，契约 §4.1）。 */
   schedule?: PluginScheduleApi;
+  /** V1.2 配置正式化（契约 §4.8）：用户覆盖持久化（plugin-settings.json）。 */
+  settingsStore?: {
+    read: () => Record<string, Record<string, unknown>>;
+    write: (state: Record<string, Record<string, unknown>>) => void;
+  };
+  /** Host-encrypted secret storage, partitioned by plugin id and key. */
+  secretStore?: {
+    get: (pluginId: string, key: string) => Promise<string>;
+    set: (pluginId: string, key: string, value: string) => Promise<void>;
+    delete: (pluginId: string, key: string) => Promise<void>;
+  };
 }
 
 export class PluginHost {
@@ -36,6 +47,7 @@ export class PluginHost {
     parsingRoutes: new Map(),
     aiProviders: new Map(),
     uiCommands: new Map(),
+    viewHandlers: new Map(),
   };
   private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
 
@@ -74,7 +86,7 @@ export class PluginHost {
 
     // L2 permissions require explicit user authorization before activation.
     // L2 权限在激活前需要用户显式授权。
-    const l2Needed = plugin.manifest.permissions.filter((p) => p.startsWith('system:'));
+    const l2Needed = plugin.manifest.permissions.filter((p) => p.startsWith('system:') && !this.permissions.isGranted(id, p));
     if (l2Needed.length > 0 && this.options.onRequestL2Authorization) {
       const granted = await this.options.onRequestL2Authorization(plugin.manifest, l2Needed);
       if (!granted) {
@@ -97,6 +109,8 @@ export class PluginHost {
         emitEvent: (event, payload) => this.emit(event, payload),
         subscribe: (event, listener) => this.subscribe(event, listener),
         schedule: this.options.schedule,
+        configValues: this.resolveSettings(plugin.manifest),
+        secretStore: this.options.secretStore,
       });
 
       await this.withTimeout(entry.activate(context), `activate(${id})`);
@@ -136,6 +150,9 @@ export class PluginHost {
     for (const [cid, command] of this.sink.uiCommands) {
       if (command.pluginId === id) this.sink.uiCommands.delete(cid);
     }
+    for (const [key, handler] of this.sink.viewHandlers) {
+      if (handler.pluginId === id) this.sink.viewHandlers.delete(key);
+    }
   }
 
   /** Uninstalls a plugin: deactivates, removes registry entry and permissions. */
@@ -149,6 +166,64 @@ export class PluginHost {
   /** L1 dispatch helpers used by the host's extension points. */
   getContributions(): ContributionSink {
     return this.sink;
+  }
+
+  /** Dispatches a sandboxed view request only while its plugin and handler are active. */
+  async invokeView(pluginId: string, viewId: string, request: { method: string; params?: unknown }): Promise<unknown> {
+    const plugin = this.registry.get(pluginId);
+    if (!plugin || plugin.state !== 'active') throw new Error('插件未启用，页面请求已停止。');
+    if (!plugin.manifest.contributes?.views?.some((view) => view.id === viewId)) throw new Error(`未知插件页面：${viewId}`);
+    const handler = this.sink.viewHandlers.get(`${pluginId}:${viewId}`);
+    if (!handler) throw new Error('插件页面尚未就绪，请重新启用插件后重试。');
+    return handler.invoke(request);
+  }
+
+  /**
+   * V1.2 配置正式化（契约 §4.8）：合并用户覆盖与 manifest settings 默认值。
+   * 只接受 manifest 声明的键；类型不符的覆盖值丢弃并回退默认。
+   */
+  private resolveSettings(manifest: { settings?: Record<string, { type: string; default: unknown; min?: number; max?: number }> }): Record<string, unknown> {
+    const specs = manifest.settings ?? {};
+    const overrides = (this.options.settingsStore?.read() ?? {})[manifestIdOf(manifest)] ?? {};
+    const values: Record<string, unknown> = {};
+    for (const [key, spec] of Object.entries(specs)) {
+      const raw = key in overrides ? overrides[key] : spec.default;
+      values[key] = coerceSettingValue(key, raw, spec) ?? spec.default;
+    }
+    return values;
+  }
+
+  /** 读取插件的合并配置值（用户覆盖 → manifest default）。 */
+  getSettings(id: string): Record<string, unknown> {
+    const plugin = this.registry.get(id);
+    if (!plugin) return {};
+    return this.resolveSettings(plugin.manifest);
+  }
+
+  /**
+   * 写入用户覆盖并持久化（契约 §4.8）：仅 manifest 声明的键可写，逐键类型校验，
+   * 任一非法即抛中文可操作错误且不落盘。
+   */
+  setSettings(id: string, values: unknown): Record<string, unknown> {
+    const plugin = this.registry.get(id);
+    if (!plugin) throw new Error(`未知插件：${id}`);
+    const specs = plugin.manifest.settings ?? {};
+    if (!values || typeof values !== 'object' || Array.isArray(values)) {
+      throw new Error('配置内容无效：应为包含配置键的对象。');
+    }
+    const incoming = values as Record<string, unknown>;
+    const state = this.options.settingsStore?.read() ?? {};
+    const current = { ...(state[id] ?? {}) };
+    for (const [key, raw] of Object.entries(incoming)) {
+      const spec = specs[key];
+      if (!spec) throw new Error(`插件 ${id} 未声明配置键：${key}。`);
+      const coerced = coerceSettingValue(key, raw, spec);
+      if (coerced === undefined) throw new Error(`配置 ${key} 的值类型不合法（应为 ${spec.type}）。`);
+      current[key] = coerced;
+    }
+    state[id] = current;
+    this.options.settingsStore?.write(state);
+    return this.resolveSettings(plugin.manifest);
   }
 
   /** Event bus (host + plugins share one bus). */
@@ -182,4 +257,27 @@ export class PluginHost {
       if (timer) clearTimeout(timer);
     }
   }
+}
+
+
+/** 从 manifest 对象取插件 id（resolveSettings 内部用）。 */
+function manifestIdOf(manifest: { id?: string }): string {
+  return typeof manifest.id === 'string' ? manifest.id : '';
+}
+
+/** 单键类型强转（契约 §4.8）：合法返回值，非法返回 undefined。 */
+function coerceSettingValue(key: string, raw: unknown, spec: { type: string; min?: number; max?: number }): unknown {
+  if (spec.type === 'string') return typeof raw === 'string' ? raw : undefined;
+  if (spec.type === 'boolean') return typeof raw === 'boolean' ? raw : undefined;
+  if (spec.type === 'number') {
+    const n = typeof raw === 'number' ? raw : Number.parseFloat(String(raw ?? ''));
+    if (!Number.isFinite(n)) return undefined;
+    const lo = typeof spec.min === 'number' ? spec.min : -Infinity;
+    const hi = typeof spec.max === 'number' ? spec.max : Infinity;
+    return Math.min(hi, Math.max(lo, n));
+  }
+  if (spec.type === 'string[]') {
+    return Array.isArray(raw) && raw.every((v) => typeof v === 'string') ? raw : undefined;
+  }
+  return undefined;
 }

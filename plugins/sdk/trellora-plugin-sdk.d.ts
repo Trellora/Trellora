@@ -30,6 +30,7 @@ export type PluginPermission =
   | 'pipeline:parse'
   | 'ai:provider'
   | 'ui:command'
+  | 'ui:view'
   | 'data:source'
   | 'schedule:write'
   // L2 system APIs (explicit user authorization required)
@@ -46,10 +47,18 @@ export type PluginActivationEvent =
   | '*';
 
 /** Static contribution declarations (mirrored at runtime via the API). */
+export interface PluginViewContribution {
+  id: string;
+  title: string;
+  location: 'settings';
+  entry: string;
+}
+
 export interface PluginContributions {
   parsingRoutes?: Array<{ extension: string; route: string }>;
   aiProviders?: Array<{ id: string; api: string }>;
   uiCommands?: Array<{ id: string; title: string; panel?: 'sidebar' | 'command-palette' | 'toolbar' }>;
+  views?: PluginViewContribution[];
 }
 
 /** plugin.json manifest. 插件清单。 */
@@ -189,6 +198,21 @@ export interface PluginUiCommandApi {
   }): void;
 }
 
+/** Sandboxed plugin-owned HTML view and its backend message handler. */
+export interface PluginUiViewApi {
+  registerViewHandler(contribution: {
+    viewId: string;
+    invoke: (request: { method: string; params?: unknown }) => unknown | Promise<unknown>;
+  }): void;
+}
+
+/** Host-encrypted, plugin-scoped secret storage. */
+export interface PluginSecretApi {
+  get(key: string): Promise<string>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 /** @experimental Data-source extension point (search / retrieval sources). */
 export interface PluginDataSourceApi {
   registerDataSource(contribution: {
@@ -219,8 +243,8 @@ export interface PluginScheduleUpsertItem extends ScheduleCreateRequest {
 export interface PluginScheduleApi {
   /**
    * 幂等 upsert：按 (source, externalId) 映射到已有条目则更新，否则新建。
-   * 返回 `skipped` 为附加字段：本地完成态优先而跳过状态字段的条目数
-   * （供 NoticeHubStatus.counts.skipped 聚合）。
+   * 返回 `skipped` 为附加字段：本地完成态优先而跳过状态字段的条目数，
+   * 供插件聚合同步状态。
    */
   upsertItems(source: string, items: PluginScheduleUpsertItem[]): Promise<{ upsertedIds: string[]; skipped?: number }>;
   /** 删除本 source 下指定 externalId 的条目及其映射。 */
@@ -266,16 +290,17 @@ export interface PluginContext {
   readonly config: PluginConfig;
   readonly events: PluginEventBus;
 
-  // L1 capabilities (permission: pipeline:parse / ai:provider / ui:command / data:source / schedule:write)
+  // L1 capabilities (permission: pipeline:parse / ai:provider / ui:command / ui:view / data:source / schedule:write)
   readonly pipeline: PluginParsingRouteApi;
   readonly ai: PluginAiProviderApi;
-  readonly ui: PluginUiCommandApi;
+  readonly ui: PluginUiCommandApi & PluginUiViewApi;
   readonly data: PluginDataSourceApi;
   /** @experimental 日程扩展点（契约 §4.1，权限：schedule:write）。 */
   readonly schedule: PluginScheduleApi;
 
   // L2 system (permission: system:file / system:network)
   readonly files: PluginFileApi;
+  readonly secrets: PluginSecretApi;
   readonly network: PluginNetworkApi;
 }
 

@@ -1,0 +1,36 @@
+.plugin-view-frame {
+  position: relative;
+  width: 100%;
+  min-height: 560px;
+  height: calc(100vh - 236px);
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-body);
+}
+
+.plugin-view-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.plugin-view-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-sm);
+  pointer-events: none;
+}
+
+@media (max-width: 800px) {
+  .plugin-view-frame {
+    min-height: 620px;
+    height: calc(100vh - 210px);
+  }
+}

@@ -3,8 +3,6 @@
  * 事件芯片 — 月视图单元格的紧凑事件渲染。
  */
 import type { ScheduleOccurrence } from '../../../../shared/schedule.ts';
-import NoticeHubSourceBadge from '../NoticeHubSourceBadge.tsx';
-import { hasNoticeHubSource, noticeHubGroupNames } from '../noticeHubSource.ts';
 
 interface EventChipProps {
   occurrence: ScheduleOccurrence;
@@ -25,7 +23,6 @@ export default function EventChip({ occurrence, onClick }: EventChipProps) {
       onClick={(e) => { e.stopPropagation(); onClick?.(occurrence); }}
       title={item.title}
     >
-      {hasNoticeHubSource(item.tags) && <NoticeHubSourceBadge groupNames={noticeHubGroupNames(item.tags)} />}
       {timeLabel && <span className="schedule-event-chip-time">{timeLabel}</span>}
       <span className="schedule-event-chip-title">{item.title}</span>
     </div>

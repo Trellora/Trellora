@@ -306,6 +306,7 @@
     "verify:desktop-faults": "node scripts/verify/verify-desktop-faults.mjs",
     "verify:desktop-ui": "node scripts/verify/verify-desktop-ui.mjs",
     "benchmark:desktop-backup": "node scripts/benchmark/benchmark-desktop-backup.mjs",
+    "verify:plugin-installer": "node scripts/verify/verify-plugin-installer.mjs",
     "verify:plugin-system": "node scripts/verify/verify-plugin-system.mjs",
     "audit:plugin": "node scripts/validate-plugin-manifest.mjs plugins/examples/hello-command"
   },
@@ -452,10 +453,6 @@
       {
         "from": "build/builtin-skills",
         "to": "builtin-skills"
-      },
-      {
-        "from": "plugins/notice-hub",
-        "to": "builtin-plugins/notice-hub"
       }
     ],
     "win": {

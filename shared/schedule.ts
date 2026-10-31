@@ -115,7 +115,7 @@ export interface ScheduleCreateRequest {
   todoStatus?: TodoStatus | null;
   dueAt?: string | null;
   priority?: 'low' | 'normal' | 'high' | 'urgent' | null;
-  completedAt?: string | null;         // 外部数据源回填（如 notice-hub done_at）
+  completedAt?: string | null;         // 外部数据源回填的完成时间
   libraryPath?: string | null;
   libraryName?: string | null;
   notePath?: string | null;
@@ -247,8 +247,8 @@ export interface ScheduleExternalMapping {
 }
 
 /**
- * upsert 结果。`skipped` 是附加字段：本地完成态优先而跳过状态字段的条目数
- * （契约 §5.4 用于聚合 NoticeHubStatus.counts.skipped）。
+ * upsert 结果。`skipped` 是附加字段：本地完成态优先而跳过状态字段的条目数，
+ * 供外部数据插件聚合同步状态。
  */
 export interface ScheduleExternalUpsertResult {
   upsertedIds: string[];
@@ -265,9 +265,9 @@ export const SCHEDULE_EXTERNAL_MAX_BATCH = 500;
 /** title / description 截断上限（契约 §4.1）。 */
 export const SCHEDULE_EXTERNAL_TITLE_MAX = 200;
 export const SCHEDULE_EXTERNAL_DESCRIPTION_MAX = 4000;
-/** 外部数据源条目缺省分类名（契约 §5.1：默认「群务台」）。 */
-export const SCHEDULE_EXTERNAL_DEFAULT_CATEGORY = '群务台';
-/** 外部数据源分类缺省颜色（契约 §5.1：#0F766E，仅新建分类时使用）。 */
+/** 外部数据源条目缺省分类名；插件可通过 category 自行指定。 */
+export const SCHEDULE_EXTERNAL_DEFAULT_CATEGORY = '外部同步';
+/** 外部数据源分类缺省颜色，仅在新建分类时使用。 */
 export const SCHEDULE_EXTERNAL_DEFAULT_CATEGORY_COLOR = '#0F766E';
 
 // ── Events (push from main → renderer) ──────────────────────────────────────

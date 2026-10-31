@@ -996,16 +996,25 @@ declare global {
         readonly platform: string;
         waitForStartup: () => Promise<void>;
         ping: () => Promise<string>;
+        windowControls: {
+          minimize: () => Promise<void>;
+          toggleMaximized: () => Promise<boolean>;
+          isMaximized: () => Promise<boolean>;
+          close: () => Promise<void>;
+        };
         plugin: {
           listCommands: () => Promise<Array<{ id: string; title: string; panel?: string }>>;
           invokeCommand: (commandId: string, args?: { trigger?: 'command-palette' | 'sidebar' | 'toolbar'; payload?: unknown }) => Promise<{ ok: boolean }>;
-          list: () => Promise<Array<{ manifest: { id: string; name: string; version: string; description?: string; permissions: string[] }; state: string; error?: string }>>;
+          list: () => Promise<Array<{ manifest: { id: string; name: string; version: string; description?: string; permissions: string[]; contributes?: { views?: Array<{ id: string; title: string; location: 'settings'; entry: string }> } }; state: string; error?: string }>>;
           installFromUrl: (url: string) => Promise<{ manifest: { id: string; name: string; version: string }; pluginDir: string }>;
           installFromZip: (zipPath: string) => Promise<{ manifest: { id: string; name: string; version: string }; pluginDir: string }>;
           chooseZip: () => Promise<string | null>;
           enable: (id: string) => Promise<{ ok: boolean }>;
           disable: (id: string) => Promise<{ ok: boolean }>;
           uninstall: (id: string) => Promise<{ ok: boolean }>;
+          getSettings: (id: string) => Promise<Record<string, unknown>>;
+          setSettings: (id: string, values: Record<string, unknown>) => Promise<{ ok: boolean; values: Record<string, unknown> }>;
+          invokeView: (pluginId: string, viewId: string, method: string, params?: unknown) => Promise<unknown>;
         };
         selectDirectory: () => Promise<string | null>;
         selectWorkspace: () => Promise<string | null>;

@@ -60,7 +60,7 @@ Trellora 面向需要持续阅读、写作和整理资料的开发者、学生�
 | 日程与课表 | 事件、待办、课表与提醒；年 / 月 / 周 / 日视图、重复规则（含单双周）、分类颜色；CSV / Excel 课表导入与 AI 辅助导入（图片 / URL / 文本），批次可整体撤销 |
 | 内置终端 | 应用内交互式 shell，多标签会话；macOS 提供 zsh / bash，Windows 提供 PowerShell / CMD / Git Bash / WSL；`Ctrl+\`` 呼出底部终端面板 |
 | 插件（实验性） | 插件 SDK 与清单；命令面板/侧栏/工具栏扩展；权限分层（L1 披露、L2 需用户确认）；从 URL 或 ZIP 安装 |
-| 群务台 · notice-hub 同步 | 插件 `com.expertkt.notice-hub`：把 QQ 群通知衍生的待办、公告与截止时间单向同步进日程（来源徽标、提醒提前量、ICS 兜底）；独立仓库 [Trellora/NoticHubPlugin](https://github.com/Trellora/NoticHubPlugin) 分发；双许可证（MIT + PolyForm Noncommercial，商用需授权），详见 [移植说明](docs/notice-hub-移植说明.md) |
+| 群务台 · notice-hub 同步 | 插件 `com.expertkt.notice-hub`：把 QQ 群通知衍生的待办、公告与截止时间同步进日程（来源徽标、提醒提前量、ICS 兜底；V1.1 可选双向回写与收件箱面板）；独立仓库 [Trellora/NoticHubPlugin](https://github.com/Trellora/NoticHubPlugin) 分发；双许可证（MIT + PolyForm Noncommercial，商用需授权），详见 [插件仓库 README](https://github.com/Trellora/NoticHubPlugin) |
 | 桌面体验与恢复 | 中英文界面、深浅主题、五种配色、首次使用引导、笔记备份、工作区完整备份与恢复、存储迁移和诊断 |
 
 基础编辑、文件浏览和笔记关键词搜索不要求配置 AI。向量检索需要 Embedding；AI 回答和生成需要可用模型；地图需要先在资料流水线启用并完成图谱增强。

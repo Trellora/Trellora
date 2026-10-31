@@ -57,6 +57,7 @@
           "pipeline:parse",
           "ai:provider",
           "ui:command",
+          "ui:view",
           "data:source",
           "schedule:write",
           "system:file",
@@ -74,6 +75,22 @@
         "enum": ["onStartup", "onParseRequest", "onAiRequest", "onUiCommand", "*"]
       },
       "uniqueItems": true
+    },
+    "settings": {
+      "type": "object",
+      "description": "Optional user-configurable settings schema (keys read through context.config).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "default"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "enum": ["string", "number", "boolean", "string[]"] },
+          "default": {},
+          "title": { "type": "string", "maxLength": 64 },
+          "min": { "type": "number" },
+          "max": { "type": "number" }
+        }
+      }
     },
     "contributes": {
       "type": "object",
@@ -123,6 +140,20 @@
               "id": { "type": "string", "pattern": "^[a-z0-9:-]+$", "minLength": 1, "maxLength": 64 },
               "title": { "type": "string", "minLength": 1, "maxLength": 64 },
               "panel": { "type": "string", "enum": ["sidebar", "command-palette", "toolbar"] }
+            }
+          }
+        },
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "location", "entry"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9-]+$", "minLength": 1, "maxLength": 64 },
+              "title": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "location": { "type": "string", "enum": ["settings"] },
+              "entry": { "type": "string", "pattern": "^[^/\\\\].*\\.html$", "minLength": 1, "maxLength": 256 }
             }
           }
         }

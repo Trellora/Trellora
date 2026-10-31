@@ -35,6 +35,7 @@ import type { ModelConfigurationChange, ModelProviderCatalogDraft } from '../sha
 import WorkspaceMigrationDialog from './components/settings/WorkspaceMigrationDialog.tsx';
 import { notifyWorkspaceDataChanged } from './utils/wiki/workspaceDataEvents.ts';
 import NavRail, { type MainView } from './components/navigation/NavRail.tsx';
+import WindowTitleBar from './components/navigation/WindowTitleBar.tsx';
 import ScheduleView from './components/schedule/ScheduleView.tsx';
 import { TerminalSessionsProvider } from './components/terminal/useTerminalSessions.tsx';
 import TerminalPanel from './components/terminal/TerminalPanel.tsx';
@@ -1734,8 +1735,10 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
       <WorkspaceMigrationDialog request={migrationRequest} onBlockedChange={handleMigrationBlocked} onDataChanged={handleMigratedData} />
       <TerminalSessionsProvider themeMode={resolvedTheme}>
       <div className={`app-shell${focusActive ? ' note-focus-active' : ''}`} ref={element => { if (element) element.inert = migrationBlocked; }} data-workspace-migration-blocked={migrationBlocked || undefined}>
-        {isMaintaining && !migrationBlocked && <div role="status" style={{ position: 'fixed', top: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, background: 'var(--mantine-color-body)', border: '1px solid var(--mantine-color-default-border)', borderRadius: 8, padding: '8px 16px' }}>{t('正在保存并捕获数据快照，完成后即可继续编辑。')}</div>}
+        <WindowTitleBar />
+        {isMaintaining && !migrationBlocked && <div role="status" style={{ position: 'fixed', top: 44, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, background: 'var(--mantine-color-body)', border: '1px solid var(--mantine-color-default-border)', borderRadius: 8, padding: '8px 16px' }}>{t('正在保存并捕获数据快照，完成后即可继续编辑。')}</div>}
         {!guide.state && guide.error && <div className="onboarding-state-error" role="status">{t('使用引导暂时无法读取，可在设置中重试')}<Button size="compact-xs" variant="subtle" onClick={() => void guide.refresh().catch(() => undefined)}>{t('重试')}</Button></div>}
+        <div className="app-window-body">
         <NavRail activeView={mainView} tourSelected={guide.visible && guide.step === 'menus' ? introMenu : undefined} onNavigate={(view) => void navigateDuringGuide(view)} onOpenFile={() => void externalDocuments.open()} onRecoverFiles={() => void externalDocuments.recover()} onRecentFiles={() => void externalDocuments.recent()} onPendingFiles={externalDocuments.showPendingFiles} pendingFileCount={externalDocuments.pendingFiles.length} onOpenSettings={() => {
           if (guide.visible && guide.step === 'menus') setIntroMenu('settings');
           else void (async () => { if (guide.visible) await guide.pause(); await handleOpenSettings(); })();
@@ -2101,6 +2104,7 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
             onToggle={() => setTerminalPanelOpen(false)}
           />
         )}
+        </div>
         </div>
       </div>
       </TerminalSessionsProvider>

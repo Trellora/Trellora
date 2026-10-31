@@ -801,6 +801,7 @@ async function initAndCreate() {
         catch { return new Response('Not found', { status: request.method === 'GET' ? 404 : 405 }); }
       }); documentProtocolReady = true;
     }
+    registerPluginViewProtocol(getPluginHost);
     ensureModelHubMigrated(store, {
       provider: readAiProviderConfig(),
       providerSecret: typeof store.get('aiProviderSecret') === 'string' ? store.get('aiProviderSecret') as string : undefined,
@@ -932,7 +933,7 @@ const createWindow = () => {
     show: false,
     backgroundColor: getWindowBackgroundColor(),
     icon: getWindowIconPath(),
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -5262,10 +5263,10 @@ let scheduleImportService: ScheduleImportService | undefined;
 
 import { TerminalService } from './terminal/terminalService.ts';
 import { PluginHost } from './plugins/pluginHost.ts';
-import { NoticeHubBridge, NOTICE_HUB_PLUGIN_ID } from './noticeHub/noticeHubBridge.ts';
-import type { NoticeHubStatus } from '../shared/noticeHub.ts';
-import { NOTICE_HUB_CHANNEL_STATUS_CHANGED } from '../shared/noticeHub.ts';
+import { registerPluginViewProtocol, registerPluginViewScheme } from './plugins/pluginViewProtocol.ts';
 import { installPluginFromUrl, installPluginFromZip } from './plugins/pluginInstaller.ts';
+
+registerPluginViewScheme();
 let terminalService: TerminalService | undefined;
 
 function getOrCreateScheduleService(): ScheduleService {
@@ -5318,7 +5319,9 @@ registerAppHandler('schedule:update-occurrence', (event, req: ScheduleOccurrence
 });
 registerAppHandler('schedule:set-todo-status', (event, id: string, status: TodoStatus) => {
   assertInternalRenderer(event);
-  return getOrCreateScheduleService().setTodoStatus(id, status);
+  const item = getOrCreateScheduleService().setTodoStatus(id, status);
+  pluginHost?.emit('host:schedule:local-status', { itemId: id, todoStatus: status });
+  return item;
 });
 registerAppHandler('schedule:list-categories', (event) => {
   assertInternalRenderer(event);
@@ -5549,7 +5552,15 @@ registerAppHandler('plugin:install-from-url', async (event, url: string) => {
   assertInternalRenderer(event);
   const host = getPluginHost();
   const tempDir = path.join(app.getPath('temp'), 'trellora-plugin-install');
-  const { manifest, pluginDir } = await installPluginFromUrl(url, path.join(app.getPath('userData'), 'plugins'), tempDir);
+  // 下载错误已自带可操作提示（代理 / DNS / TLS / HTTP）；失败时记入应用日志便于诊断。
+  let installed: Awaited<ReturnType<typeof installPluginFromUrl>>;
+  try {
+    installed = await installPluginFromUrl(url, path.join(app.getPath('userData'), 'plugins'), tempDir);
+  } catch (error) {
+    logToWindow(`[PLUGIN] 从 URL 安装失败：${(error as Error).message}`);
+    throw error;
+  }
+  const { manifest, pluginDir } = installed;
   // Reload the plugin into the host registry.
   // 重新加载插件到宿主注册表。
   const plugin = host.registry.get(manifest.id);
@@ -5589,16 +5600,33 @@ registerAppHandler('plugin:choose-zip', async (event) => {
 
 registerAppHandler('plugin:enable', async (event, id: string) => {
   assertInternalRenderer(event);
-  await getPluginHost().activate(id);
-  // notice-hub 激活后立即补发一次配置（契约 §4.4）。
-  getNoticeHubBridge().notifyPluginActivated(id);
-  return { ok: true };
+  const host = getPluginHost();
+  await host.activate(id);
+  return { ok: host.registry.get(id)?.state === 'active' };
 });
 
 registerAppHandler('plugin:disable', async (event, id: string) => {
   assertInternalRenderer(event);
   await getPluginHost().disable(id);
   return { ok: true };
+});
+
+registerAppHandler('plugin:invoke-view', async (event, pluginId: string, viewId: string, method: string, params?: unknown) => {
+  assertInternalRenderer(event);
+  if (typeof pluginId !== 'string' || typeof viewId !== 'string' || typeof method !== 'string' || !method) {
+    throw new Error('插件页面请求格式无效。');
+  }
+  return getPluginHost().invokeView(pluginId, viewId, { method, params });
+});
+
+registerAppHandler('plugin:get-settings', (event, id: string) => {
+  assertInternalRenderer(event);
+  return getPluginHost().getSettings(id);
+});
+
+registerAppHandler('plugin:set-settings', (event, id: string, values: unknown) => {
+  assertInternalRenderer(event);
+  return { ok: true, values: getPluginHost().setSettings(id, values) };
 });
 
 registerAppHandler('plugin:uninstall', async (event, id: string) => {
@@ -5610,71 +5638,21 @@ registerAppHandler('plugin:uninstall', async (event, id: string) => {
   return { ok: true };
 });
 
-// ── 内置插件播种（随应用预装的插件包） ───────────────────────────────────────
-// notice-hub 等「随应用预装的插件」以插件包形式分发（extraResources → builtin-plugins/），
-// 启动时播种到 userData/plugins/，在插件管理中呈现为普通插件（可启用/停用/卸载），
-// 而不是伪装成内置功能。幂等：仅当目标目录不存在时拷贝，绝不覆盖用户已安装或已修改的副本。
-const BUILTIN_PLUGIN_DIRECTORIES = ['notice-hub'] as const;
-
-/** 开发与发布使用同一组内置插件资源；发布后取 extraResources，开发取仓库 plugins/。 */
-function getBundledPluginsPath(): string {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'builtin-plugins')
-    : path.resolve('plugins');
-}
-
-/** 读取插件清单 id；不可读时返回空串（按目录名兜底播种）。 */
-function readPluginManifestId(pluginDir: string): string {
-  try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8')) as { id?: unknown };
-    return typeof manifest.id === 'string' ? manifest.id : '';
-  } catch {
-    return '';
-  }
-}
-
-function seedBuiltinPlugins(): void {
-  const pluginsDir = path.join(app.getPath('userData'), 'plugins');
-  const bundleRoot = getBundledPluginsPath();
-  for (const directory of BUILTIN_PLUGIN_DIRECTORIES) {
-    const destination = path.join(pluginsDir, directory);
-    if (fs.existsSync(destination)) continue;
-    const source = path.join(bundleRoot, directory);
-    if (!fs.existsSync(path.join(source, 'plugin.json'))) {
-      logToWindow(`[PLUGIN] 内置插件 ${directory} 缺失，跳过播种（请重新安装应用）。`);
-      continue;
-    }
-    // 已有其他目录承载同一插件（如用户从 zip 安装、目录名为清单 id）时跳过，
-    // 避免同一 id 双份注册（注册表按 id 去重，后到者会加载失败）。
-    const bundledId = readPluginManifestId(source);
-    if (bundledId) {
-      const occupied = fs.existsSync(pluginsDir) && fs.readdirSync(pluginsDir, { withFileTypes: true })
-        .some((entry) => entry.isDirectory() && entry.name !== directory && readPluginManifestId(path.join(pluginsDir, entry.name)) === bundledId);
-      if (occupied) {
-        logToWindow(`[PLUGIN] 插件 ${bundledId} 已由用户安装，跳过内置播种。`);
-        continue;
-      }
-    }
-    fs.mkdirSync(pluginsDir, { recursive: true });
-    // 先拷到临时目录再原子改名，避免中断留下半个插件目录（与内置技能播种同模式）。
-    const temporary = path.join(pluginsDir, `.builtin-${randomUUID()}`);
-    try {
-      fs.cpSync(source, temporary, { recursive: true, dereference: false });
-      fs.renameSync(temporary, destination);
-    } catch (error) {
-      logToWindow(`[PLUGIN] 内置插件 ${directory} 播种失败：${(error as Error).message}`);
-    } finally {
-      fs.rmSync(temporary, { recursive: true, force: true });
-    }
-  }
-}
-
-// ── Terminal Service ──────────────────────────────────────────────────────────
 let pluginHost: PluginHost | undefined;
 function getPluginHost(): PluginHost {
   if (!pluginHost) {
-    // 预装插件先播种到 userData/plugins/，再进入发现/激活流程。
-    seedBuiltinPlugins();
+    const secretsPath = path.join(app.getPath('userData'), 'plugin-secrets.json');
+    const readSecrets = (): Record<string, Record<string, string>> => {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(secretsPath, 'utf8')) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return parsed as Record<string, Record<string, string>>;
+      } catch { return {}; }
+    };
+    const writeSecrets = (state: Record<string, Record<string, string>>): void => {
+      fs.mkdirSync(path.dirname(secretsPath), { recursive: true });
+      fs.writeFileSync(secretsPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+    };
     pluginHost = new PluginHost({
       pluginsDir: path.join(app.getPath('userData'), 'plugins'),
       trelloraVersion: app.getVersion(),
@@ -5688,9 +5666,38 @@ function getPluginHost(): PluginHost {
           fs.writeFileSync(path.join(app.getPath('userData'), 'plugin-permissions.json'), JSON.stringify(state, null, 2));
         },
       },
+      settingsStore: {
+        read: () => {
+          try { return JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'plugin-settings.json'), 'utf8')) as Record<string, Record<string, unknown>>; }
+          catch { return {}; }
+        },
+        write: (state) => {
+          fs.mkdirSync(app.getPath('userData'), { recursive: true });
+          fs.writeFileSync(path.join(app.getPath('userData'), 'plugin-settings.json'), JSON.stringify(state, null, 2));
+        },
+      },
+      secretStore: {
+        get: async (pluginId, key) => {
+          const encrypted = readSecrets()[pluginId]?.[key];
+          if (typeof encrypted !== 'string' || !encrypted) return '';
+          if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用，无法读取插件密钥。');
+          return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+        },
+        set: async (pluginId, key, value) => {
+          if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用，插件密钥未保存。');
+          const state = readSecrets();
+          state[pluginId] = { ...(state[pluginId] ?? {}), [key]: safeStorage.encryptString(value).toString('base64') };
+          writeSecrets(state);
+        },
+        delete: async (pluginId, key) => {
+          const state = readSecrets();
+          if (!state[pluginId]) return;
+          delete state[pluginId][key];
+          if (Object.keys(state[pluginId]).length === 0) delete state[pluginId];
+          writeSecrets(state);
+        },
+      },
       onLog: (message) => logToWindow(message),
-      // 日程扩展点（契约 §4.1）：ScheduleService 适配器。幂等 upsert / 删除 / 列映射
-      // 均由 ScheduleService 按 (source, externalId) 映射表实现，插件不接触 SQLite。
       schedule: {
         upsertItems: async (source, items) => {
           const result = getOrCreateScheduleService().upsertExternalItems(source, items);
@@ -5719,44 +5726,11 @@ function getPluginHost(): PluginHost {
         return result.response === 1;
       },
     });
-    // notice-hub：绑定事件桥（订阅 plugin:notice-hub:status），激活完成后补发配置（契约 §4.4）。
-    getNoticeHubBridge().attachPluginHost(pluginHost);
     pluginHost.discover();
     void pluginHost.activateFor('onStartup')
-      .then(() => getNoticeHubBridge().notifyPluginActivated(NOTICE_HUB_PLUGIN_ID))
       .catch((error) => logToWindow(`[PLUGIN] startup activation failed: ${(error as Error).message}`));
   }
   return pluginHost;
-}
-
-// ── Notice Hub（群务台）宿主桥接 ─────────────────────────────────────────────
-// 配置持久化 userData/notice-hub.json + 状态缓存 + 事件总线桥（契约 §3/§4.3/§4.4）。
-let noticeHubBridge: NoticeHubBridge | undefined;
-function getNoticeHubBridge(): NoticeHubBridge {
-  if (!noticeHubBridge) {
-    noticeHubBridge = new NoticeHubBridge({
-      userDataPath: app.getPath('userData'),
-      getPluginHost,
-      broadcastStatus: (status: NoticeHubStatus) => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(NOTICE_HUB_CHANNEL_STATUS_CHANGED, status);
-        }
-      },
-      // 令牌落盘走 safeStorage（仓库密钥惯例）；加密不可用时拒绝保存而非明文落盘。
-      tokenVault: {
-        seal: (plain) => {
-          if (!plain) return '';
-          if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用，访问令牌未保存。');
-          return `enc:v1:${safeStorage.encryptString(plain).toString('base64')}`;
-        },
-        open: (stored) => (stored.startsWith('enc:v1:')
-          ? safeStorage.decryptString(Buffer.from(stored.slice('enc:v1:'.length), 'base64'))
-          : stored),
-      },
-      onLog: (level, message) => logToWindow(`[NOTICE-HUB][${level}] ${message}`),
-    });
-  }
-  return noticeHubBridge;
 }
 
 function getOrCreateTerminalService(): TerminalService {
@@ -6915,6 +6889,16 @@ registerAppHandler('assistant-context-diagnostics:get', (_event, turnId?: unknow
   return getContextProjectionDiagnostics(turnId);
 });
 registerAppHandler('get-app-diagnostics', () => createSafeDiagnostics());
+registerAppHandler('window:minimize', (event) => { BrowserWindow.fromWebContents(event.sender)?.minimize(); });
+registerAppHandler('window:toggle-maximized', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return false;
+  if (window.isMaximized()) window.unmaximize();
+  else window.maximize();
+  return window.isMaximized();
+});
+registerAppHandler('window:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false);
+registerAppHandler('window:close', (event) => { BrowserWindow.fromWebContents(event.sender)?.close(); });
 
 function capabilityContext(request: CapabilityRequest = {}) {
   const libraryPath = request.libraryPath === undefined ? undefined : requireRegisteredMaterialsLibrary(request.libraryPath);

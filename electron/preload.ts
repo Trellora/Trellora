@@ -57,6 +57,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     startupAppearance: readStartupAppearance(process.argv),
     waitForStartup: () => ipcRenderer.invoke('startup:ready'),
     ping: () => ipcRenderer.invoke('ping'),
+    windowControls: {
+      minimize: () => ipcRenderer.invoke('window:minimize') as Promise<void>,
+      toggleMaximized: () => ipcRenderer.invoke('window:toggle-maximized') as Promise<boolean>,
+      isMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+      close: () => ipcRenderer.invoke('window:close') as Promise<void>,
+    },
     plugin: {
       listCommands: () => ipcRenderer.invoke('plugin:list-commands'),
       invokeCommand: (commandId: string, args?: { trigger?: 'command-palette' | 'sidebar' | 'toolbar'; payload?: unknown }) => ipcRenderer.invoke('plugin:invoke-command', commandId, args),
@@ -67,6 +73,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       enable: (id: string) => ipcRenderer.invoke('plugin:enable', id),
       disable: (id: string) => ipcRenderer.invoke('plugin:disable', id),
       uninstall: (id: string) => ipcRenderer.invoke('plugin:uninstall', id),
+      getSettings: (id: string) => ipcRenderer.invoke('plugin:get-settings', id),
+      setSettings: (id: string, values: Record<string, unknown>) => ipcRenderer.invoke('plugin:set-settings', id, values),
+      invokeView: (pluginId: string, viewId: string, method: string, params?: unknown) => ipcRenderer.invoke('plugin:invoke-view', pluginId, viewId, method, params),
     },
     // File System APIs
     // 文件系统 API

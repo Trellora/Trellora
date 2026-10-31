@@ -84,7 +84,7 @@ export function parsePublicWebUrl(value: string): URL {
 }
 
 /**
- * Parse a plugin-facing service URL (notice-hub 等本机服务，契约 §4.2)。
+ * Parse a plugin-facing service URL（供插件访问公共服务或本机环回服务）。
  * 在原「公共 https」之外仅放行环回（127.0.0.0/8、::1、localhost、*.localhost）
  * 的 http/https；内网、链路本地、ULA、带凭据 URL 与非法 IP 一律继续拒绝。
  *

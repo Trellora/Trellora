@@ -24,6 +24,7 @@ import {
   Divider,
   Group,
   Modal,
+  NumberInput,
   Paper,
   ScrollArea,
   SegmentedControl,
@@ -31,6 +32,7 @@ import {
   SimpleGrid,
   Skeleton,
   Stack,
+  Switch,
   Text,
   TextInput,
   ThemeIcon,
@@ -77,8 +79,11 @@ interface PluginManifest {
   engine?: { trellora: string };
   permissions: string[];
   activation?: string[];
+  /** V1.2 配置正式化（契约 §4.8）：manifest settings schema。 */
+  settings?: Record<string, { type: 'string' | 'number' | 'boolean' | 'string[]'; default: string | number | boolean | string[]; title?: string; min?: number; max?: number }>;
   contributes?: {
     uiCommands?: Array<{ id: string; title: string; panel?: 'sidebar' | 'command-palette' | 'toolbar' }>;
+    views?: Array<{ id: string; title: string; location: 'settings'; entry: string }>;
   };
 }
 
@@ -162,6 +167,8 @@ export default function PluginLibraryView({ active }: { active: boolean }) {
     try {
       const list = (await window.electronAPI.plugin.list()) as unknown as PluginSummary[];
       setPlugins(list);
+      setDetailPlugin((current) => current ? list.find((plugin) => plugin.manifest.id === current.manifest.id) ?? null : null);
+      window.dispatchEvent(new Event('trellora:plugins-changed'));
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -217,8 +224,10 @@ export default function PluginLibraryView({ active }: { active: boolean }) {
     setBusy(true);
     setError(null);
     try {
-      if (nextState === 'active') await window.electronAPI.plugin.enable(id);
-      else await window.electronAPI.plugin.disable(id);
+      if (nextState === 'active') {
+        const result = await window.electronAPI.plugin.enable(id);
+        if (!result.ok) throw new Error(t('插件启用失败，请查看插件错误详情。'));
+      } else await window.electronAPI.plugin.disable(id);
       await refresh();
     } catch (err) {
       const message = (err as Error).message;
@@ -253,8 +262,10 @@ export default function PluginLibraryView({ active }: { active: boolean }) {
     setError(null);
     try {
       for (const id of selectedIds) {
-        if (action === 'enable') await window.electronAPI.plugin.enable(id);
-        else if (action === 'disable') await window.electronAPI.plugin.disable(id);
+        if (action === 'enable') {
+          const result = await window.electronAPI.plugin.enable(id);
+          if (!result.ok) throw new Error(t('插件 {0} 启用失败，请查看错误详情。', { 0: id }));
+        } else if (action === 'disable') await window.electronAPI.plugin.disable(id);
         else await window.electronAPI.plugin.uninstall(id);
       }
       setSelectedIds(new Set());
@@ -532,7 +543,12 @@ export default function PluginLibraryView({ active }: { active: boolean }) {
               </ActionIcon>
             </div>
             <ScrollArea className="pl-detail-scroll" type="auto">
-              <PluginDetail plugin={detailPlugin} onClose={() => setDetailPlugin(null)} />
+              <PluginDetail
+                plugin={detailPlugin}
+                onClose={() => setDetailPlugin(null)}
+                onToggle={() => void toggle(detailPlugin.manifest.id, detailPlugin.state === 'active' ? 'disabled' : 'active')}
+                onUninstall={() => void uninstall(detailPlugin.manifest.id)}
+              />
             </ScrollArea>
           </>
         )}
@@ -655,7 +671,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-function PluginDetail({ plugin, onClose }: { plugin: PluginSummary; onClose: () => void }) {
+function PluginDetail({ plugin, onClose, onToggle, onUninstall }: { plugin: PluginSummary; onClose: () => void; onToggle: () => void; onUninstall: () => void }) {
   const { manifest } = plugin;
   const grouped = groupPermissions(manifest.permissions);
 
@@ -703,6 +719,13 @@ function PluginDetail({ plugin, onClose }: { plugin: PluginSummary; onClose: () 
         </Stack>
       )}
 
+      {manifest.settings && Object.keys(manifest.settings).length > 0 && (
+        <>
+          <Divider label={t('插件配置')} labelPosition="left" />
+          <PluginSettingsForm pluginId={manifest.id} specs={manifest.settings} />
+        </>
+      )}
+
       {manifest.contributes?.uiCommands && manifest.contributes.uiCommands.length > 0 && (
         <>
           <Divider label={t('UI 命令')} labelPosition="left" />
@@ -721,6 +744,19 @@ function PluginDetail({ plugin, onClose }: { plugin: PluginSummary; onClose: () 
         </>
       )}
 
+      {manifest.contributes?.views && manifest.contributes.views.length > 0 && (
+        <>
+          <Divider label={t('插件页面')} labelPosition="left" />
+          <Stack gap="xs">
+            {manifest.contributes.views.map((view) => (
+              <Paper key={view.id} withBorder p="xs" radius="sm">
+                <Group gap="xs"><Puzzle size={14} /><Text fw={500} size="sm">{view.title}</Text><Badge size="xs" variant="outline">{view.location}</Badge></Group>
+              </Paper>
+            ))}
+          </Stack>
+        </>
+      )}
+
       {plugin.error && (
         <>
           <Divider label={t('错误信息')} labelPosition="left" />
@@ -730,20 +766,83 @@ function PluginDetail({ plugin, onClose }: { plugin: PluginSummary; onClose: () 
 
       <Divider label={t('操作')} labelPosition="left" />
       <Group justify="flex-end" gap="xs">
-        <Button
-          variant="light"
-          color={plugin.state === 'active' ? 'gray' : 'green'}
-          onClick={() => {
-            onClose();
-            if (plugin.state === 'active') void window.electronAPI.plugin.disable(manifest.id);
-            else void window.electronAPI.plugin.enable(manifest.id);
-          }}
-        >
+        <Button variant="light" color={plugin.state === 'active' ? 'gray' : 'green'} onClick={() => { onClose(); onToggle(); }}>
           {plugin.state === 'active' ? t('禁用') : t('启用')}
         </Button>
-        <Button variant="light" color="red" onClick={() => { onClose(); void window.electronAPI.plugin.uninstall(manifest.id); }}>
-          {t('卸载')}
-        </Button>
+        <Button variant="light" color="red" onClick={() => { onClose(); onUninstall(); }}>{t('卸载')}</Button>
+      </Group>
+    </Stack>
+  );
+}
+
+
+// ── V1.2 配置正式化（契约 §4.8）：manifest settings 用户覆盖表单 ─────────────
+interface PluginSettingSpec {
+  type: 'string' | 'number' | 'boolean' | 'string[]';
+  default: string | number | boolean | string[];
+  title?: string;
+  min?: number;
+  max?: number;
+}
+
+function PluginSettingsForm({ pluginId, specs }: { pluginId: string; specs: Record<string, PluginSettingSpec> }) {
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void window.electronAPI.plugin.getSettings(pluginId)
+      .then((merged) => { if (alive) setValues(merged); })
+      .catch(() => { if (alive) setMessage(t('配置读取失败，请稍后重试。')); });
+    return () => { alive = false; };
+  }, [pluginId]);
+
+  const save = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const result = await window.electronAPI.plugin.setSettings(pluginId, values);
+      setValues(result.values);
+      setMessage(t('配置已保存。'));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('配置保存失败。'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Stack gap="sm">
+      {Object.entries(specs).map(([key, spec]) => (
+        <Group key={key} justify="space-between" align="center">
+          <Text size="sm">{spec.title || key}</Text>
+          {spec.type === 'boolean' ? (
+            <Switch
+              size="sm"
+              checked={Boolean(values[key])}
+              onChange={(event) => setValues((current) => ({ ...current, [key]: event.currentTarget.checked }))}
+            />
+          ) : spec.type === 'number' ? (
+            <NumberInput
+              size="xs"
+              value={typeof values[key] === 'number' ? values[key] as number : 0}
+              min={spec.min}
+              max={spec.max}
+              onChange={(value) => setValues((current) => ({ ...current, [key]: typeof value === 'number' ? value : spec.default }))}
+            />
+          ) : (
+            <TextInput
+              size="xs"
+              value={typeof values[key] === 'string' ? values[key] : Array.isArray(values[key]) ? (values[key] as string[]).join(', ') : ''}
+              onChange={(event) => setValues((current) => ({ ...current, [key]: event.currentTarget.value }))}
+            />
+          )}
+        </Group>
+      ))}
+      <Group justify="flex-end" gap="xs">
+        {message && <Text size="xs" c="dimmed">{message}</Text>}
+        <Button size="xs" loading={saving} onClick={() => void save()}>{t('保存配置')}</Button>
       </Group>
     </Stack>
   );
