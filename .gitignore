@@ -85,5 +85,12 @@ pipeline-python/chunking-*-test-*/
 pipeline-python/keywords-*/
 build/pipeline-runtime/
 
+# Runtime-generated verification fixtures (recreated by verify-* scripts)
+build/plugin-view-fixture/
+build/ui-layout-fixture/
+
+# Local classwork/scratch directory with node_modules and generated outputs
+doc-report/class3-work/
+
 # Graphify local outputs and caches
 graphify-out/
