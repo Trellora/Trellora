@@ -4,6 +4,13 @@
  */
 
 import { createMaterialEmbeddingRequestSignal } from '../../pipeline/materialEmbeddingTypes';
+import {
+  NO_SOURCE_ID,
+  OLLAMA_SOURCE_ID,
+  readModelHub,
+  resolveProviderCredentials,
+  type HubStore,
+} from '../ai/modelHub.ts';
 
 /** Rerank request timeout (ms); failure degrades gracefully. / Rerank 请求超时（毫秒）；失败即降级。 */
 export const RERANK_TIMEOUT_MS = 8_000;
