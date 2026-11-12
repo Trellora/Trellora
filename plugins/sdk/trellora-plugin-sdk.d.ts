@@ -213,12 +213,35 @@ export interface PluginSecretApi {
   delete(key: string): Promise<void>;
 }
 
+/** Options passed to a plugin search data source. */
+export interface PluginSearchOptions {
+  /** Maximum number of results the host would like to receive. */
+  limit?: number;
+  /** Opaque filter object agreed upon by the plugin and its consumers. */
+  filters?: Record<string, unknown>;
+}
+
+/** Result item returned by a plugin search data source. */
+export interface PluginSearchResult {
+  /** Stable id within this data source. */
+  id: string;
+  title?: string;
+  /** Snippet or full content used for ranking/display. */
+  content?: string;
+  /** Optional relevance score (higher is better). */
+  score?: number;
+  /** Arbitrary metadata consumers can use for rendering. */
+  metadata?: Record<string, unknown>;
+}
+
 /** @experimental Data-source extension point (search / retrieval sources). */
 export interface PluginDataSourceApi {
   registerDataSource(contribution: {
     id: string;
     kind: 'search' | 'embedding' | 'vector-store';
-    search?: (query: string, options?: unknown) => Promise<unknown>;
+    /** Required for kind='search'. Called by the host when routing a search query to this source. */
+    search?: (query: string, options?: PluginSearchOptions) => Promise<PluginSearchResult[]>;
+    /** Required for kind='embedding' or kind='vector-store'. */
     embed?: (texts: string[]) => Promise<number[][]>;
   }): void;
 }

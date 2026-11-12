@@ -186,7 +186,7 @@ export interface PluginContext {
     registerDataSource(contribution: {
       id: string;
       kind: 'search' | 'embedding' | 'vector-store';
-      search?: (query: string, options?: unknown) => Promise<unknown>;
+      search?: (query: string, options?: { limit?: number; filters?: Record<string, unknown> }) => Promise<Array<{ id: string; title?: string; content?: string; score?: number; metadata?: Record<string, unknown> }>>;
       embed?: (texts: string[]) => Promise<number[][]>;
     }): void;
   };

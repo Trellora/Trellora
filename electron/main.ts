@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, dialog, IpcMainInvokeEvent, nativeTheme, safeStorage, shell, protocol } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, dialog, IpcMainInvokeEvent, nativeTheme, safeStorage, shell, protocol, powerMonitor } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -938,6 +938,10 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      // Keep timers and background work accurate when the window is hidden/
+      // minimized, so that autosave, backup, and memory maintenance remain on
+      // schedule even while the app runs in the background.
+      backgroundThrottling: false,
       additionalArguments: [`${STARTUP_APPEARANCE_ARGUMENT}${encodeURIComponent(JSON.stringify(appearance))}`],
       // devTools: true // Keep enabled for potential debugging
     },
@@ -953,6 +957,9 @@ const createWindow = () => {
       app.focus();
     }
     startupWindow.focus();
+    // Resume memory maintenance when a window becomes visible again after the
+    // app was kept alive with no windows (macOS) or after system sleep.
+    resumeWorkspaceMemory();
   });
 
   // Fallback: if ready-to-show never fires within 8 seconds, force-show the window.
@@ -5000,7 +5007,17 @@ ipcMain.handle('startup:ready', async (event) => {
   assertInternalRenderer(event);
   await startupInitialization;
 });
-if (ownsApplicationInstance) app.whenReady().then(() => { startupInitialization = initAndCreate(); });
+if (ownsApplicationInstance) app.whenReady().then(() => {
+  powerMonitor.on('suspend', () => {
+    appLogger.record('info', 'background', 'SYSTEM_SLEEP');
+    pauseWorkspaceBackground();
+  });
+  powerMonitor.on('resume', () => {
+    appLogger.record('info', 'background', 'SYSTEM_WAKE');
+    if (mainWindow && !mainWindow.isDestroyed()) resumeWorkspaceMemory();
+  });
+  startupInitialization = initAndCreate();
+});
 else app.quit();
 app.on('will-quit', () => { appLogger.record('info', 'startup', 'APP_EXIT'); dataRootLocks.releaseAll(); });
 let shutdownComplete = false;
@@ -5097,6 +5114,38 @@ async function activateWorkspaceRuntime(): Promise<void> {
   await stopWorkspaceMemory();
   qaMemoryDatabase.getDatabase(getConfiguredWorkspacePath());
   await initializeLibraryIndex();
+}
+
+/** Pause lightweight background maintenance while the laptop sleeps or all windows are closed (macOS keep-alive). */
+function pauseWorkspaceBackground(): void {
+  try {
+    for (const service of memoryExtractionServices.values()) void service.stop();
+    for (const service of conversationSearchServices.values()) service.stop();
+    for (const service of memoryConsolidationServices.values()) service.pauseForMaintenance();
+    if (dailySnapshotTimer) { clearInterval(dailySnapshotTimer); dailySnapshotTimer = undefined; }
+    appLogger.record('info', 'background', 'BACKGROUND_PAUSED');
+  } catch (error) {
+    appLogger.record('warn', 'background', `PAUSE_FAILED ${getErrorMessage(error)}`);
+  }
+}
+
+/** Resume only the memory-related background lane (used on wake / window reopen). */
+function resumeWorkspaceMemory(): void {
+  try {
+    const scope = resolveActiveLongTermMemoryScope().scope;
+    if (!isRestorePaused(getConfiguredWorkspacePath())) recoverCompletedExplicitMemories(qaMemoryDatabase, getConfiguredWorkspacePath(), scope);
+    getMemoryExtractionService().start();
+    getConversationSearchService().start(scope);
+    getMemoryConsolidationService().resumeAfterMaintenance();
+    // Restart the daily backup timer if it was cleared while sleeping/all-windows-closed.
+    if (!dailySnapshotTimer && workspaceBackupService) {
+      dailySnapshotTimer = setInterval(() => { if (maintenanceBarrier.phase === 'idle' && !workspaceRestoreService?.busy) void workspaceBackupService?.runDaily().catch(() => appLogger.record('warn', 'backup', 'DAILY_BACKUP_FAILED')); }, 60_000);
+      dailySnapshotTimer.unref();
+    }
+    appLogger.record('info', 'background', 'MEMORY_RESUMED');
+  } catch (error) {
+    appLogger.record('warn', 'background', `MEMORY_RESUME_FAILED ${getErrorMessage(error)}`);
+  }
 }
 
 function resumeWorkspaceBackground(): void {
@@ -8357,5 +8406,9 @@ app.on('activate', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  } else {
+    // On macOS the app stays alive without windows; pause background work to
+    // avoid burning CPU/battery until the user reopens a window.
+    pauseWorkspaceBackground();
   }
 });

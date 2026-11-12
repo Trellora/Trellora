@@ -46,6 +46,7 @@ import LibraryGraphView from './components/library/LibraryGraphView.tsx';
 import PluginLibraryView from './components/library/PluginLibraryView.tsx';
 import LibraryManagerView from './components/library/LibraryManagerView.tsx';
 import { useOnboarding } from './components/onboarding/useOnboarding.ts';
+import { dispatchKeyboardShortcut, getKeyboardShortcuts, type ShortcutActions } from './keyboardShortcuts.ts';
 import { OnboardingAiTask, OnboardingBar, OnboardingCompletion, OnboardingMenus, type OnboardingModelDraft } from './components/onboarding/OnboardingGuide.tsx';
 import { Button } from '@mantine/core';
 import ConfirmModal from './components/ui/ConfirmModal.tsx';
@@ -499,37 +500,6 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
       setArePreferencesLoaded(true);
     }
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const mod = event.ctrlKey || event.metaKey;
-
-      // Cmd/Ctrl + K or P — toggle search
-      if (mod && (event.key === 'k' || event.key === 'p')) {
-        event.preventDefault();
-        setIsSearchOpen((previous) => !previous);
-        return;
-      }
-      // Ctrl + ` — toggle terminal panel
-      if (event.ctrlKey && event.key === '`') {
-        event.preventDefault();
-        setTerminalPanelOpen((prev) => !prev);
-        return;
-      }
-      // Cmd/Ctrl + B — toggle sidebar
-      if (mod && !event.shiftKey && event.key === 'b') {
-        event.preventDefault();
-        setIsLeftSidebarCollapsed((prev) => !prev);
-        return;
-      }
-      // Cmd/Ctrl + / — toggle keyboard shortcuts reference
-      if (mod && event.key === '/') {
-        event.preventDefault();
-        setIsShortcutsOpen((prev) => !prev);
-        return;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
     if (window.electronAPI?.onLog) {
       window.electronAPI.onLog((msg) => {
         console.log('%c[MAIN]', 'background: #3f3f3b; color: #fff; padding: 2px 4px; borderRadius: 2px;', msg);
@@ -538,7 +508,6 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
 
     return () => {
       alive = false;
-      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [loadFiles, loadLibraries, replaceAppPreferences]);
 
@@ -795,18 +764,6 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
     }
   }, [replaceAppPreferences, synchronizeAppearance]);
 
-  useEffect(() => {
-    const handleThemeShortcut = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'l') return;
-      event.preventDefault();
-      const nextTheme: ResolvedTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
-      void handleSavePreferences({ theme: nextTheme })
-        .then(() => showThemeFeedback(t("已切换为{0}外观", { '0': nextTheme === 'dark' ? t("深色") : t("浅色") })))
-        .catch(() => showThemeFeedback(t("外观切换失败，请在设置中重试。")));
-    };
-    window.addEventListener('keydown', handleThemeShortcut);
-    return () => window.removeEventListener('keydown', handleThemeShortcut);
-  }, [handleSavePreferences, resolvedTheme, showThemeFeedback]);
   const handleRightPanelWidthChange = useCallback(async (width: number) => {
     await handleSavePreferences({ rightPanelWidth: width });
   }, [handleSavePreferences]);
@@ -1443,53 +1400,6 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
     }
   };
 
-  // Extended keyboard shortcuts (depend on functions defined above)
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const mod = event.ctrlKey || event.metaKey;
-
-      // Ctrl + ` — toggle terminal panel (works even in text input)
-      if (event.ctrlKey && event.key === '`') {
-        event.preventDefault();
-        setTerminalPanelOpen((prev) => !prev);
-        return;
-      }
-
-      const tag = (event.target as HTMLElement)?.tagName;
-      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || (event.target as HTMLElement)?.isContentEditable;
-
-      // Skip shortcuts when in text input (theme shortcut has its own listener)
-      if (isInput) return;
-
-      // Cmd/Ctrl + N — new note
-      if (mod && !event.shiftKey && event.key === 'n') {
-        event.preventDefault();
-        void handleCreateFile('');
-        return;
-      }
-      // Cmd/Ctrl + S — save current note
-      if (mod && !event.shiftKey && event.key === 's') {
-        event.preventDefault();
-        void flushPendingSave();
-        return;
-      }
-      // Cmd/Ctrl + , — open settings
-      if (mod && event.key === ',') {
-        event.preventDefault();
-        void handleOpenSettings();
-        return;
-      }
-      // Cmd/Ctrl + Shift + E — toggle editor mode (wysiwyg/source)
-      if (mod && event.shiftKey && event.key.toLowerCase() === 'e') {
-        event.preventDefault();
-        setEditorMode((prev) => prev === 'wysiwyg' ? 'source' : 'wysiwyg');
-        return;
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleCreateFile, handleOpenSettings, flushPendingSave]);
-
   const handleOpenWikiLink = async (target: string) => {
     if (!window.electronAPI || !currentPath) return;
     const saved = await flushPendingSave();
@@ -1677,6 +1587,43 @@ function App({ onResolvedThemeChange, onStartupReady }: AppProps) {
       materialsNavigationPendingRef.current = false;
     }
   }, [flushPendingSave, loadLibraries]);
+
+  // Unified keyboard shortcut registry. Keep the source array and the live
+  // handlers in one place so the shortcuts reference modal never drifts.
+  const keyboardShortcutActions = useMemo<ShortcutActions>(() => ({
+    search: () => setIsSearchOpen((previous) => !previous),
+    terminal: () => setTerminalPanelOpen((previous) => !previous),
+    sidebar: () => setIsLeftSidebarCollapsed((previous) => !previous),
+    shortcuts: () => setIsShortcutsOpen((previous) => !previous),
+    theme: () => {
+      const nextTheme: ResolvedTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
+      void handleSavePreferences({ theme: nextTheme })
+        .then(() => showThemeFeedback(t("已切换为{0}外观", { '0': nextTheme === 'dark' ? t("深色") : t("浅色") })))
+        .catch(() => showThemeFeedback(t("外观切换失败，请在设置中重试。")));
+    },
+    'new-note': () => void handleCreateFile(''),
+    'save-note': () => void flushPendingSave(),
+    settings: () => void handleOpenSettings(),
+    'editor-mode': () => setEditorMode((previous) => previous === 'wysiwyg' ? 'source' : 'wysiwyg'),
+    'nav-1': () => void handleNavigateMainView('home'),
+    'nav-2': () => void handleNavigateMainView('notes'),
+    'nav-3': () => void handleNavigateMainView('sources'),
+    'nav-4': () => void handleNavigateMainView('wiki'),
+    'nav-5': () => void handleNavigateMainView('graph'),
+    'nav-6': () => void handleNavigateMainView('calendar'),
+    'nav-7': () => setMainView('terminal'),
+    'nav-8': () => void handleNavigateMainView('plugins'),
+    'nav-9': () => void handleNavigateMainView('libraries'),
+  }), [resolvedTheme, handleSavePreferences, showThemeFeedback, handleCreateFile, flushPendingSave, handleOpenSettings, handleNavigateMainView]);
+
+  useEffect(() => {
+    const shortcuts = getKeyboardShortcuts();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      dispatchKeyboardShortcut(event, keyboardShortcutActions, shortcuts);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [keyboardShortcutActions]);
 
   // Changing tutorial pages preserves cached editors and conversations.
   useEffect(() => {
